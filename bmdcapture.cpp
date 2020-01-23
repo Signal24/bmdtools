@@ -57,10 +57,12 @@ const char *g_audioOutputFile    = NULL;
 static int g_maxFrames           = -1;
 static int serial_fd             = -1;
 static int wallclock             = 0;
+static int waitForKey            = 0;
 static int draw_bars             = 1;
 bool g_verbose                   = false;
 unsigned long long g_memoryLimit = 1024 * 1024 * 1024;            // 1GByte(>50 sec)
 
+static int shouldWriteFrames    = 0;
 static unsigned long frameCount = 0;
 static unsigned int dropped     = 0, totaldropped = 0;
 static enum AVPixelFormat pix_fmt     = AV_PIX_FMT_UYVY422;
@@ -552,6 +554,7 @@ int usage(int status)
         "                         6: S-Video\n"
         "    -o <optionstring>    AVFormat options\n"
         "    -w                   Embed a wallclock stream\n"
+        "    -W                   Wait for a key before streaming packets to output"
         "    -d <filler>          When the source is offline draw a black frame or color bars\n"
         "                         0: black frame\n"
         "                         1: color bars\n"
@@ -571,6 +574,9 @@ static void *push_packet(void *ctx)
     int ret;
 
     while (avpacket_queue_get(&queue, &pkt, 1)) {
+        if (!shouldWriteFrames) {
+            continue;
+        }
         av_interleaved_write_frame(s, &pkt);
         if ((g_maxFrames > 0 && frameCount >= g_maxFrames) ||
             avpacket_queue_size(&queue) > g_memoryLimit) {
@@ -618,7 +624,7 @@ int main(int argc, char *argv[])
     }
 
     // Parse command line options
-    while ((ch = getopt(argc, argv, "?hvc:s:f:a:m:n:p:M:F:C:A:V:o:w:S:d:")) != -1) {
+    while ((ch = getopt(argc, argv, "?hvc:s:f:a:m:n:p:M:F:C:A:V:o:w:W:S:d:")) != -1) {
         switch (ch) {
         case 'v':
             g_verbose = true;
@@ -725,6 +731,9 @@ int main(int argc, char *argv[])
             break;
         case 'w':
             wallclock = true;
+            break;
+        case 'W':
+            waitForKey = true;
             break;
         case 'd':
             draw_bars = atoi(optarg);
@@ -923,6 +932,13 @@ int main(int argc, char *argv[])
 
     if (pthread_create(&th, NULL, push_packet, oc))
         goto bail;
+
+    if (waitForKey) {
+        fprintf(stderr, "Ready. Press [ENTER] to begin.");
+        getchar();
+    }
+
+    shouldWriteFrames = true;
 
     // Block main thread until signal occurs
     pthread_mutex_lock(&sleepMutex);
